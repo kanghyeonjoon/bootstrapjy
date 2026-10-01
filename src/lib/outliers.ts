@@ -1,21 +1,26 @@
-import { embed, hasGemini, hasLLM, llmJson } from "@/lib/ai";
+import { hasLLM, llmJson } from "@/lib/ai";
 import { embedPending, ingestVideos, isKorean, translatePending } from "@/lib/corpus";
-import { getKv, q, setKv, vec } from "@/lib/db";
+import { getKv, q, setKv } from "@/lib/db";
 import { runPatterns } from "@/lib/patterns";
+import { searchOutliers } from "@/lib/search";
 import { searchVideos } from "@/lib/youtube";
 
 /**
  * 아웃라이어 탭 — 연결한 폴더의 "반복 주제(패턴)"를 기준으로, 영상 DB 전체에서
- * 그 주제로 크게 잘 된 영상을 골라 피드에 쌓는다. 매주 한 번 돈다.
+ * 그 주제로 크게 잘 된 영상을 골라 피드에 쌓는다.
  *
- * Vidoutliers 의 "폴더 연결" 모달 문구가 이 구조를 말해 준다:
+ * Vidoutliers 의 "폴더 연결" 모달 문구가 구조를 말해 준다:
  *   "폴더의 반복 주제(패턴)를 기준으로 골라요. 폴더 연결 변경은 다음 주부터 적용돼요."
  * 그래서 내 레퍼런스(명상·뇌과학)와 비슷한 영상만 나온다.
+ *
+ * 목적은 "내 분야에서, 내가 아직 모르는 채널까지 포함해 검증된 영상을 발견하는 것"이다.
+ * 두 단계로 나눈다:
+ *   pick   — 이미 쌓인 DB 에서 패턴별로 고른다. 몇 초면 끝난다 (화면에서 바로 보이게)
+ *   expand — 패턴으로 유튜브를 훑어 새 채널을 DB 에 들인다. 느리니 뒤편(크론·after)에서만
  */
 
 const PER_PATTERN = 12;
 const MIN_RATIO = 2;
-/** 패턴 하나당 유튜브 검색으로 새로 들일 채널 상한 (채널당 4유닛) */
 const NEW_CHANNELS_PER_PATTERN = 12;
 /** 자동 연결 때 쓸 폴더 수 */
 const AUTO_FOLDERS = 3;
@@ -29,6 +34,7 @@ export async function connectedFolders(): Promise<number[]> {
   const link = await getKv<FolderLink>("outlierFolders", { pinned: [] });
   const all = await q<{ id: number }>(
     `SELECT f.id FROM folders f
+      WHERE EXISTS (SELECT 1 FROM folder_channels fc WHERE fc.folder_id = f.id)
       ORDER BY (SELECT COUNT(*) FROM folder_channels fc WHERE fc.folder_id = f.id) DESC, f.id`,
   );
   const ids = all.map((r) => r.id);
@@ -40,83 +46,108 @@ export async function setFolderLink(pinned: number[]): Promise<void> {
   await setKv("outlierFolders", { pinned });
 }
 
-/** 패턴 하나로 새 아웃라이어를 고른다 */
-async function pickForPattern(folderId: number, label: string, budgetNewChannels: number): Promise<number> {
-  // 1) 유튜브에서 이 주제를 훑어 DB 를 넓힌다
-  const queries = hasLLM()
-    ? (
-        await llmJson<{ q: string[] }>(
-          '유튜브 영상 주제 하나를 받아, 같은 주제의 인기 영상을 찾을 유튜브 검색어 2개를 만든다. 한국어 하나, 영어 하나. {"q":["...","..."]} JSON 하나만.',
-          label,
-          { maxTokens: 300, lite: true },
-        )
-      ).q
-    : [label];
-  const found = (
-    await Promise.all(queries.map((s) => searchVideos(s, isKorean(s) ? { lang: "ko", region: "KR" } : { lang: "en" }).catch(() => [])))
-  ).flat();
-  await ingestVideos(found, { maxNewChannels: budgetNewChannels });
-  await translatePending(80).catch(() => 0);
-  await embedPending(600).catch(() => 0);
-
-  // 2) DB 전체에서 이 주제와 가까운 아웃라이어
-  const exclude = `AND v.video_id NOT IN (SELECT video_id FROM outlier_feed)
-                   AND v.video_id NOT IN (SELECT video_id FROM dismissed_videos)
-                   AND v.channel_id NOT IN (SELECT channel_id FROM hidden_channels)
-                   AND v.format = 'long' AND v.published_at >= now() - interval '1 year'`;
-  let rows: Array<{ video_id: string }>;
-  if (hasGemini()) {
-    const [e] = await embed([label], "query");
-    rows = await q(
-      `SELECT video_id FROM (
-         SELECT v.video_id, v.ratio FROM videos v
-          WHERE v.embedding IS NOT NULL AND v.ratio >= $2 ${exclude}
-          ORDER BY v.embedding <=> $1::vector LIMIT ${PER_PATTERN * 3}) t
-        ORDER BY ratio DESC LIMIT ${PER_PATTERN}`,
-      [vec(e), MIN_RATIO],
-    );
-  } else {
-    const words = label.split(/[\s,·]+/).filter((w) => w.length >= 2).slice(0, 6);
-    rows = await q(
-      `SELECT v.video_id FROM videos v
-        WHERE v.ratio >= $1 ${exclude}
-          AND (${words.map((_, i) => `v.title ILIKE $${i + 2}`).join(" OR ") || "false"})
-        ORDER BY v.ratio DESC LIMIT ${PER_PATTERN}`,
-      [MIN_RATIO, ...words.map((w) => `%${w}%`)],
-    );
+/** 연결 폴더의 패턴. 아직 없으면 그 자리에서 분석한다 (AI 1회) */
+async function patternsOf(folderId: number): Promise<string[]> {
+  const get = async () =>
+    (
+      await q<{ label: string }>(
+        "SELECT label FROM patterns WHERE folder_id = $1 AND format = 'long' ORDER BY position",
+        [folderId],
+      )
+    ).map((r) => r.label);
+  let labels = await get();
+  if (!labels.length && hasLLM()) {
+    await runPatterns(folderId, "long").catch(() => 0);
+    labels = await get();
   }
-
-  for (const r of rows) {
-    await q("INSERT INTO outlier_feed (video_id, folder_id, pattern) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING", [
-      r.video_id,
-      folderId,
-      label,
-    ]);
-  }
-  return rows.length;
+  return labels;
 }
 
-/**
- * 주간 배치. 연결 폴더마다 패턴을 (없으면 먼저 분석해서) 가져와 새 아웃라이어를 고른다.
- * 시간 예산을 넘기면 멈추고, 다음 실행이 이어서 한다.
- */
-export async function runOutlierBatch(budgetMs = 240_000): Promise<{ added: number; patterns: number }> {
-  const start = Date.now();
+const PICK = `너는 유튜브 레퍼런스 큐레이터다. 영상 주제(패턴) 하나와 후보 영상 목록을 받는다.
+그 주제를 실제로 다루는 영상만 골라 관련도순으로 나열한다. 최대 12개, 같은 채널은 2편까지. 맞는 게 적으면 적게.
+출력은 JSON 하나만: {"ids":["영상ID", ...]}`;
+
+/** 패턴 하나로 DB 에서 고른다 — 유튜브는 건드리지 않는다 */
+async function pickForPattern(folderId: number, label: string): Promise<number> {
+  const cands = await searchOutliers({
+    texts: [label],
+    minRatio: MIN_RATIO,
+    limit: 40,
+    where: `v.video_id NOT IN (SELECT video_id FROM outlier_feed) AND v.published_at >= now() - interval '1 year'`,
+  });
+  if (!cands.length) return 0;
+
+  let ids = cands.slice(0, PER_PATTERN).map((c) => c.video_id);
+  if (hasLLM()) {
+    try {
+      const list = cands.map((c) => `${c.video_id} | ${c.ratio.toFixed(1)}x | ${c.channel_title} | ${c.title_ko ?? c.title}`).join("\n");
+      const out = await llmJson<{ ids: string[] }>(PICK, `주제: ${label}\n\n${list}`, { maxTokens: 800, lite: true });
+      const known = new Set(cands.map((c) => c.video_id));
+      ids = [...new Set(out.ids ?? [])].filter((id) => known.has(id)).slice(0, PER_PATTERN);
+    } catch {
+      // AI 가 막히면 가까운 순 그대로
+    }
+  }
+  if (ids.length) {
+    await q(
+      `INSERT INTO outlier_feed (video_id, folder_id, pattern)
+       SELECT id, $2, $3 FROM unnest($1::text[]) AS id ON CONFLICT DO NOTHING`,
+      [ids, folderId, label],
+    );
+  }
+  return ids.length;
+}
+
+/** 지금 고르기 — 이미 쌓인 DB 에서 패턴별로 고른다 (빠름) */
+export async function pickOutliers(): Promise<{ added: number; patterns: number }> {
   let added = 0;
   let patterns = 0;
-
   for (const folderId of await connectedFolders()) {
-    let labels = await q<{ label: string }>("SELECT label FROM patterns WHERE folder_id = $1 AND format = 'long' ORDER BY position", [folderId]);
-    if (!labels.length && hasLLM()) {
-      await runPatterns(folderId, "long").catch(() => 0);
-      labels = await q("SELECT label FROM patterns WHERE folder_id = $1 AND format = 'long' ORDER BY position", [folderId]);
-    }
-    for (const { label } of labels) {
-      if (Date.now() - start > budgetMs) return { added, patterns };
-      added += await pickForPattern(folderId, label, NEW_CHANNELS_PER_PATTERN);
+    for (const label of await patternsOf(folderId)) {
+      added += await pickForPattern(folderId, label);
       patterns++;
     }
   }
   await setKv("outliersRefreshedAt", new Date().toISOString());
   return { added, patterns };
+}
+
+/** 패턴으로 유튜브를 훑어 새 채널을 DB 에 들인다 (느림 — 뒤편 전용) */
+export async function expandOutliers(budgetMs: number): Promise<number> {
+  const start = Date.now();
+  let n = 0;
+  for (const folderId of await connectedFolders()) {
+    for (const label of await patternsOf(folderId)) {
+      if (Date.now() - start > budgetMs) return n;
+      const queries = hasLLM()
+        ? await llmJson<{ q: string[] }>(
+            '유튜브 영상 주제 하나를 받아, 같은 주제의 인기 영상을 찾을 유튜브 검색어 2개를 만든다. 한국어 하나, 영어 하나. {"q":["...","..."]} JSON 하나만.',
+            label,
+            { maxTokens: 300, lite: true },
+          )
+            .then((r) => r.q)
+            .catch(() => [label])
+        : [label];
+      const found = (
+        await Promise.all(
+          queries.map((s) => searchVideos(s, isKorean(s) ? { lang: "ko", region: "KR" } : { lang: "en" }).catch(() => [])),
+        )
+      ).flat();
+      await ingestVideos(found, { maxNewChannels: NEW_CHANNELS_PER_PATTERN });
+      n++;
+    }
+  }
+  return n;
+}
+
+/**
+ * 주간 배치 (크론): DB 를 넓히고 → 번역·임베딩 → 새로 고른다.
+ * 시간 예산을 넘기면 확장은 멈추지만 고르기는 항상 한다.
+ */
+export async function runOutlierBatch(budgetMs = 240_000): Promise<{ added: number; patterns: number }> {
+  const start = Date.now();
+  await expandOutliers(budgetMs * 0.5);
+  await translatePending(150).catch(() => 0);
+  await embedPending(270, Math.max(0, budgetMs * 0.8 - (Date.now() - start))).catch(() => 0);
+  return pickOutliers();
 }

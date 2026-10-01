@@ -10,13 +10,14 @@ export default async function Settings() {
   const ch = await one<{ n: string; f: string }>(
     "SELECT COUNT(*)::text AS n, COUNT(*) FILTER (WHERE source = 'folder')::text AS f FROM channels",
   );
+  const emb = await one<{ n: string }>("SELECT COUNT(*)::text AS n FROM videos WHERE embedding IS NOT NULL");
   const rows: Array<[string, React.ReactNode]> = [
     ["Gemini (전체 AI · 무료)", <Status key="g" ok={hasGemini()} />],
     ["Claude (선택 · 유료)", <Status key="c" ok={hasClaude()} />],
     ["유튜브", <Status key="y" ok={Boolean(process.env.YOUTUBE_API_KEY || process.env.YT_REFRESH_TOKEN)} />],
     [
       "영상 DB",
-      `${(await corpusSize()).toLocaleString()}편 · 채널 ${Number(ch?.n ?? 0).toLocaleString()}개 (폴더 ${ch?.f ?? 0})`,
+      `${(await corpusSize()).toLocaleString()}편 (뜻 검색 준비 ${Number(emb?.n ?? 0).toLocaleString()}편) · 채널 ${Number(ch?.n ?? 0).toLocaleString()}개 (폴더 ${ch?.f ?? 0})`,
     ],
   ];
 

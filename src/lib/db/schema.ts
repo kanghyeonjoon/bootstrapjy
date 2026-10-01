@@ -51,6 +51,8 @@ CREATE TABLE IF NOT EXISTS videos (
 );
 CREATE INDEX IF NOT EXISTS videos_channel_idx ON videos (channel_id, published_at DESC);
 CREATE INDEX IF NOT EXISTS videos_ratio_idx ON videos (ratio DESC);
+-- 뜻 검색 색인. 영상이 수만 편이 돼도 후보 100개를 바로 꺼낸다
+CREATE INDEX IF NOT EXISTS videos_embedding_idx ON videos USING hnsw (embedding vector_cosine_ops);
 
 -- ── 폴더 (대시보드) ───────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS folders (

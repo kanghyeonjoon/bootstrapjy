@@ -69,35 +69,42 @@ function median(xs: number[]): number | null {
 
 type RatioOf = (v: YtVideo) => number | null;
 
+/**
+ * 영상 여러 편을 한 번에 쓴다. 한 줄씩 INSERT 하면 채널 40개 × 100편 = 4,000번 왕복이라
+ * 클라우드 DB 에서는 그것만 몇 분이었다. JSON 하나로 묶어 보내면 한 번이다.
+ */
 async function saveVideos(videos: YtVideo[], ratioOf: RatioOf) {
-  for (const v of videos) {
-    const ratio = ratioOf(v);
-    await q(
-      `INSERT INTO videos (video_id, channel_id, title, description, published_at, duration_sec,
-                           format, thumbnail_url, view_count, ratio, lang)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
-       ON CONFLICT (video_id) DO UPDATE SET
-         title = excluded.title,
-         description = excluded.description,
-         thumbnail_url = COALESCE(excluded.thumbnail_url, videos.thumbnail_url),
-         view_count = excluded.view_count,
-         ratio = COALESCE(excluded.ratio, videos.ratio),
-         updated_at = now()`,
-      [
-        v.videoId,
-        v.channelId,
-        v.title,
-        v.description,
-        v.publishedAt,
-        v.durationSec,
-        v.format,
-        v.thumbnailUrl,
-        v.viewCount,
-        ratio,
-        isKorean(v.title) ? "ko" : (v.lang ?? "other"),
-      ],
-    );
-  }
+  if (!videos.length) return;
+  const rows = videos.map((v) => ({
+    video_id: v.videoId,
+    channel_id: v.channelId,
+    title: v.title,
+    description: v.description,
+    published_at: v.publishedAt,
+    duration_sec: v.durationSec,
+    format: v.format,
+    thumbnail_url: v.thumbnailUrl,
+    view_count: v.viewCount,
+    ratio: ratioOf(v),
+    lang: isKorean(v.title) ? "ko" : (v.lang ?? "other"),
+  }));
+  await q(
+    `INSERT INTO videos (video_id, channel_id, title, description, published_at, duration_sec,
+                         format, thumbnail_url, view_count, ratio, lang)
+     SELECT video_id, channel_id, title, description, published_at, duration_sec,
+            format, thumbnail_url, view_count, ratio, lang
+       FROM jsonb_to_recordset($1::jsonb) AS r(
+         video_id text, channel_id text, title text, description text, published_at timestamptz,
+         duration_sec int, format text, thumbnail_url text, view_count bigint, ratio real, lang text)
+     ON CONFLICT (video_id) DO UPDATE SET
+       title = excluded.title,
+       description = excluded.description,
+       thumbnail_url = COALESCE(excluded.thumbnail_url, videos.thumbnail_url),
+       view_count = excluded.view_count,
+       ratio = COALESCE(excluded.ratio, videos.ratio),
+       updated_at = now()`,
+    [JSON.stringify(rows)],
+  );
 }
 
 /**
@@ -207,8 +214,13 @@ export async function translatePending(limit = 80): Promise<number> {
     rows.map((r) => `${r.video_id}\t${r.title}`).join("\n"),
     { maxTokens: 6000, lite: true },
   );
-  for (const r of rows) {
-    if (out[r.video_id]) await q("UPDATE videos SET title_ko = $2 WHERE video_id = $1", [r.video_id, out[r.video_id]]);
+  const done = rows.filter((r) => out[r.video_id]).map((r) => ({ id: r.video_id, t: out[r.video_id] }));
+  if (done.length) {
+    await q(
+      `UPDATE videos v SET title_ko = r.t FROM jsonb_to_recordset($1::jsonb) AS r(id text, t text)
+        WHERE v.video_id = r.id`,
+      [JSON.stringify(done)],
+    );
   }
   return rows.length;
 }
@@ -217,20 +229,41 @@ export function embedText(v: { title: string; title_ko?: string | null; descript
   return [v.title_ko, v.title, (v.description ?? "").slice(0, 300)].filter(Boolean).join("\n");
 }
 
-/** 아직 벡터가 없는 영상에 임베딩을 붙인다 */
-export async function embedPending(limit = 500): Promise<number> {
+/**
+ * 아직 벡터가 없는 **아웃라이어**에 임베딩을 붙인다.
+ * Gemini 무료 임베딩은 분당 100편·하루 약 1,000편이다(2026-10 실측). 그래서 검색 대상(2x 이상)에만,
+ * 배수 높은 롱폼부터 붙인다. 한도에 걸리면 기다리지 않고 멈춘다 — 다음 실행이 이어서 한다.
+ */
+export async function embedPending(limit = 500, budgetMs = 120_000): Promise<number> {
   if (!hasGemini()) return 0;
+  const start = Date.now();
   const rows = await q<{ video_id: string; title: string; title_ko: string | null; description: string | null }>(
     `SELECT video_id, title, title_ko, description FROM videos
-      WHERE embedding IS NULL ORDER BY ratio DESC NULLS LAST LIMIT $1`,
+      WHERE embedding IS NULL AND ratio >= 2
+      ORDER BY (format = 'long') DESC, ratio DESC LIMIT $1`,
     [limit],
   );
-  if (!rows.length) return 0;
-  const vecs = await embed(rows.map(embedText));
-  for (let i = 0; i < rows.length; i++) {
-    if (vecs[i]) await q("UPDATE videos SET embedding = $2 WHERE video_id = $1", [rows[i].video_id, vec(vecs[i])]);
+  let n = 0;
+  for (let i = 0; i < rows.length; i += 90) {
+    const chunk = rows.slice(i, i + 90);
+    let vecs: number[][];
+    try {
+      vecs = await embed(chunk.map(embedText), "document", { fast: true });
+    } catch {
+      break; // 무료 한도 — 오늘은 여기까지
+    }
+    const data = chunk.map((r, j) => ({ id: r.video_id, e: vecs[j] ? vec(vecs[j]) : null })).filter((d) => d.e);
+    await q(
+      `UPDATE videos v SET embedding = r.e::vector FROM jsonb_to_recordset($1::jsonb) AS r(id text, e text)
+        WHERE v.video_id = r.id`,
+      [JSON.stringify(data)],
+    );
+    n += data.length;
+    // 분당 100편 한도 — 다음 묶음 전에 1분 쉰다 (뒤편 작업이라 괜찮다)
+    if (i + 90 >= rows.length || Date.now() - start + 61_000 > budgetMs) break;
+    await new Promise((r) => setTimeout(r, 61_000));
   }
-  return rows.length;
+  return n;
 }
 
 // ── 매일 갱신 ─────────────────────────────────────────────────
@@ -257,7 +290,7 @@ export async function refreshCorpus(budgetMs = 240_000): Promise<{ channels: num
     channels += 1;
   }
   if (Date.now() - start < budgetMs) await translatePending().catch(() => 0);
-  if (Date.now() - start < budgetMs) await embedPending().catch(() => 0);
+  if (Date.now() - start < budgetMs) await embedPending(450, budgetMs - (Date.now() - start)).catch(() => 0);
   return { channels, videos };
 }
 

@@ -3,7 +3,7 @@ import { getKv, q } from "@/lib/db";
 import { since } from "@/lib/format";
 import { connectedFolders } from "@/lib/outliers";
 import { CARD_COLUMNS, cards } from "@/lib/videos";
-import { OutlierToolbar } from "./ui";
+import { AutoPick, OutlierToolbar } from "./ui";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "아웃라이어" };
@@ -59,6 +59,7 @@ export default async function Outliers({ searchParams }: { searchParams: Promise
   const connected = await connectedFolders();
   const pinned = (await getKv<{ pinned: number[] }>("outlierFolders", { pinned: [] })).pinned;
   const refreshed = await getKv<string | null>("outliersRefreshedAt", null);
+  const feedEmpty = !(await q("SELECT 1 FROM outlier_feed LIMIT 1")).length;
 
   return (
     <div className="px-4 py-6 md:px-8 md:py-8">
@@ -69,12 +70,19 @@ export default async function Outliers({ searchParams }: { searchParams: Promise
         </p>
 
         {list.length === 0 ? (
-          <div className="mt-10 rounded-2xl border border-line bg-card/60 px-4 py-14 text-center">
-            <p className="text-sm font-semibold">아직 고른 아웃라이어가 없습니다.</p>
-            <p className="mt-1 text-xs text-sub">
-              대시보드 폴더에 채널을 등록하면 매주 자동으로 채워집니다. 오른쪽 위 <b>지금 고르기</b>로 바로 시작할 수도 있어요.
-            </p>
-          </div>
+          feedEmpty && connected.length > 0 ? (
+            // 처음 들어왔는데 비어 있으면 기다리게 하지 말고 바로 고른다
+            <AutoPick />
+          ) : (
+            <div className="mt-10 rounded-2xl border border-line bg-card/60 px-4 py-14 text-center">
+              <p className="text-sm font-semibold">{connected.length ? "조건에 맞는 영상이 없습니다." : "연결할 폴더가 없습니다."}</p>
+              <p className="mt-1 text-xs text-sub">
+                {connected.length
+                  ? "필터의 배수나 게시 시기를 풀어 보세요."
+                  : "대시보드에서 폴더를 만들고 레퍼런스 채널을 넣으면, 그 분야의 아웃라이어를 골라 드려요."}
+              </p>
+            </div>
+          )
         ) : (
           <div className="mt-4">
             <CardGrid>

@@ -223,3 +223,26 @@ function FolderLinkModal({
     </Modal>
   );
 }
+
+/** 피드가 비어 있을 때 들어오면 바로 고르기를 돌리고, 끝나면 화면을 새로 그린다 */
+export function AutoPick() {
+  const router = useRouter();
+  const [msg, setMsg] = useState("내 폴더의 반복 주제(패턴)로 아웃라이어를 고르는 중");
+  const started = useRef(false);
+  useEffect(() => {
+    if (started.current) return;
+    started.current = true;
+    refreshOutliers()
+      .then((r) => {
+        if (r.added) router.refresh();
+        else setMsg(r.patterns ? "아직 이 패턴과 맞는 영상이 DB 에 없어요. 밤사이 DB 가 넓어지면 채워집니다." : "패턴을 찾지 못했어요. 대시보드 → 패턴 분석을 먼저 해 주세요.");
+      })
+      .catch((e) => setMsg((e as Error).message));
+  }, [router]);
+  return (
+    <div className="mt-10 rounded-2xl border border-line bg-card/60 px-4 py-14 text-center text-sm">
+      {msg}
+      {msg.endsWith("중") && <span className="dots ml-1 text-faint" />}
+    </div>
+  );
+}
