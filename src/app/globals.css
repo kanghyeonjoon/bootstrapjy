@@ -1,0 +1,52 @@
+@import url("https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Vidoutliers 와 같은 종이색 팔레트 */
+:root {
+  --paper: 251 248 241;
+  --side: 245 242 235;
+  --card: 255 255 255;
+  --line: 231 225 212;
+  --ink: 28 26 23;
+  --sub: 110 104 92;
+  --faint: 166 158 141;
+  --hover: 28 26 23;
+  color-scheme: light;
+}
+[data-theme="dark"] {
+  --paper: 22 21 19;
+  --side: 30 29 26;
+  --card: 36 34 31;
+  --line: 58 55 50;
+  --ink: 240 236 228;
+  --sub: 176 169 156;
+  --faint: 120 114 104;
+  --hover: 240 236 228;
+  color-scheme: dark;
+}
+
+body {
+  @apply bg-paper text-ink antialiased;
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* 진행 중 단계 옆의 점 세 개 */
+.dots::after {
+  content: "···";
+  display: inline-block;
+  overflow: hidden;
+  vertical-align: bottom;
+  width: 0;
+  animation: dots 1.2s steps(4, end) infinite;
+}
+@keyframes dots {
+  to {
+    width: 1.1em;
+  }
+}
