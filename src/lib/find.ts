@@ -1,4 +1,4 @@
-import { claudeJson, embed, hasClaude, hasGemini } from "@/lib/ai";
+import { embed, hasGemini, hasLLM, llmJson } from "@/lib/ai";
 import { corpusSize, embedPending, ingestVideos, isKorean, translatePending } from "@/lib/corpus";
 import { one, q, vec } from "@/lib/db";
 import { searchVideos } from "@/lib/youtube";
@@ -81,9 +81,9 @@ export async function runFind(
 
   try {
     // 1. 요청 방향 파악
-    emit({ type: "step", step: 1, detail: hasClaude() ? undefined : "AI 키가 없어 단순 모드로 진행" });
-    const plan = hasClaude()
-      ? await claudeJson<{ intent: string; ko: string[]; en?: string }>(PLAN, prompt, 800)
+    emit({ type: "step", step: 1, detail: hasLLM() ? undefined : "AI 키가 없어 단순 모드로 진행" });
+    const plan = hasLLM()
+      ? await llmJson<{ intent: string; ko: string[]; en?: string }>(PLAN, prompt, { maxTokens: 1000 })
       : { intent: prompt, ko: [prompt.slice(0, 60)], en: undefined };
     const queries = [...new Set([...(plan.ko ?? []).slice(0, 4), ...(plan.en ? [plan.en] : [])])];
     await q("UPDATE finds SET intent = $2, queries = $3 WHERE id = $1", [findId, plan.intent, JSON.stringify(queries)]);
@@ -111,11 +111,11 @@ export async function runFind(
     // 4. 요청에 맞는 영상 고르기
     emit({ type: "step", step: 4, detail: `${cands.length}개 중에서 고르는 중` });
     let ids: string[];
-    if (hasClaude() && cands.length) {
+    if (hasLLM() && cands.length) {
       const list = cands
         .map((c) => `${c.video_id} | ${c.ratio.toFixed(1)}x | ${c.channel_title} | ${c.title_ko ?? c.title} | ${(c.description ?? "").replace(/\s+/g, " ").slice(0, 100)}`)
         .join("\n");
-      const out = await claudeJson<{ ids: string[] }>(PICK, `요청: ${prompt}\n정답 기준: ${plan.intent}\n\n${list}`, 1500);
+      const out = await llmJson<{ ids: string[] }>(PICK, `요청: ${prompt}\n정답 기준: ${plan.intent}\n\n${list}`, { maxTokens: 2000 });
       const known = new Set(cands.map((c) => c.video_id));
       ids = [...new Set(out.ids ?? [])].filter((id) => known.has(id) && id !== input.similar);
     } else {
@@ -146,7 +146,7 @@ async function candidates(
   const hidden = "AND v.channel_id NOT IN (SELECT channel_id FROM hidden_channels)";
 
   if (hasGemini()) {
-    const qv = seedEmbedding ?? vec((await embed([[prompt, ...queries].join("\n")], "RETRIEVAL_QUERY"))[0]);
+    const qv = seedEmbedding ?? vec((await embed([[prompt, ...queries].join("\n")], "query"))[0]);
     return q<Candidate>(
       `SELECT v.video_id, v.title, v.title_ko, c.title AS channel_title, v.ratio, v.description
          FROM videos v JOIN channels c ON c.channel_id = v.channel_id

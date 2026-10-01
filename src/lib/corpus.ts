@@ -1,4 +1,4 @@
-import { claudeJson, embed, hasClaude, hasGemini } from "@/lib/ai";
+import { embed, hasGemini, hasLLM, llmJson } from "@/lib/ai";
 import { one, q, vec } from "@/lib/db";
 import {
   channelsByIds,
@@ -195,17 +195,17 @@ export async function pool<T>(items: T[], n: number, fn: (x: T) => Promise<unkno
 
 /** 외국어 제목을 한국어로. Vidoutliers 처럼 번역 제목 + 원제를 같이 보여 준다. */
 export async function translatePending(limit = 80): Promise<number> {
-  if (!hasClaude()) return 0;
+  if (!hasLLM()) return 0;
   const rows = await q<{ video_id: string; title: string }>(
     `SELECT video_id, title FROM videos WHERE lang <> 'ko' AND title_ko IS NULL
       ORDER BY ratio DESC NULLS LAST LIMIT $1`,
     [limit],
   );
   if (!rows.length) return 0;
-  const out = await claudeJson<Record<string, string>>(
+  const out = await llmJson<Record<string, string>>(
     "유튜브 영상 제목을 자연스러운 한국어로 번역한다. 고유명사·인명은 한국어 표기로. 출력은 {\"영상ID\": \"번역\"} JSON 하나만.",
     rows.map((r) => `${r.video_id}\t${r.title}`).join("\n"),
-    6000,
+    { maxTokens: 6000, lite: true },
   );
   for (const r of rows) {
     if (out[r.video_id]) await q("UPDATE videos SET title_ko = $2 WHERE video_id = $1", [r.video_id, out[r.video_id]]);

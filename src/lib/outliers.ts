@@ -1,4 +1,4 @@
-import { claudeJson, embed, hasClaude, hasGemini } from "@/lib/ai";
+import { embed, hasGemini, hasLLM, llmJson } from "@/lib/ai";
 import { embedPending, ingestVideos, isKorean, translatePending } from "@/lib/corpus";
 import { getKv, q, setKv, vec } from "@/lib/db";
 import { runPatterns } from "@/lib/patterns";
@@ -43,12 +43,12 @@ export async function setFolderLink(pinned: number[]): Promise<void> {
 /** 패턴 하나로 새 아웃라이어를 고른다 */
 async function pickForPattern(folderId: number, label: string, budgetNewChannels: number): Promise<number> {
   // 1) 유튜브에서 이 주제를 훑어 DB 를 넓힌다
-  const queries = hasClaude()
+  const queries = hasLLM()
     ? (
-        await claudeJson<{ q: string[] }>(
+        await llmJson<{ q: string[] }>(
           '유튜브 영상 주제 하나를 받아, 같은 주제의 인기 영상을 찾을 유튜브 검색어 2개를 만든다. 한국어 하나, 영어 하나. {"q":["...","..."]} JSON 하나만.',
           label,
-          300,
+          { maxTokens: 300, lite: true },
         )
       ).q
     : [label];
@@ -66,7 +66,7 @@ async function pickForPattern(folderId: number, label: string, budgetNewChannels
                    AND v.format = 'long' AND v.published_at >= now() - interval '1 year'`;
   let rows: Array<{ video_id: string }>;
   if (hasGemini()) {
-    const [e] = await embed([label], "RETRIEVAL_QUERY");
+    const [e] = await embed([label], "query");
     rows = await q(
       `SELECT video_id FROM (
          SELECT v.video_id, v.ratio FROM videos v
@@ -107,7 +107,7 @@ export async function runOutlierBatch(budgetMs = 240_000): Promise<{ added: numb
 
   for (const folderId of await connectedFolders()) {
     let labels = await q<{ label: string }>("SELECT label FROM patterns WHERE folder_id = $1 AND format = 'long' ORDER BY position", [folderId]);
-    if (!labels.length && hasClaude()) {
+    if (!labels.length && hasLLM()) {
       await runPatterns(folderId, "long").catch(() => 0);
       labels = await q("SELECT label FROM patterns WHERE folder_id = $1 AND format = 'long' ORDER BY position", [folderId]);
     }

@@ -1,4 +1,4 @@
-import { claudeJson, hasClaude } from "@/lib/ai";
+import { hasLLM, llmJson } from "@/lib/ai";
 import { q } from "@/lib/db";
 
 /**
@@ -22,7 +22,7 @@ const SYSTEM = `너는 유튜브 기획 분석가다. 한 폴더(같은 분야 �
 출력은 JSON 하나만: {"patterns": [{"label": "...", "ids": ["영상ID", ...]}]}`;
 
 export async function runPatterns(folderId: number, format: "long" | "short"): Promise<number> {
-  if (!hasClaude()) throw new Error("패턴 분석에는 ANTHROPIC_API_KEY 가 필요합니다.");
+  if (!hasLLM()) throw new Error("패턴 분석에는 GEMINI_API_KEY 가 필요합니다 (무료).");
 
   const rows = await q<{ video_id: string; title: string; title_ko: string | null; ratio: number }>(
     `SELECT v.video_id, v.title, v.title_ko, v.ratio
@@ -35,7 +35,7 @@ export async function runPatterns(folderId: number, format: "long" | "short"): P
   if (rows.length < 4) throw new Error("패턴을 찾기엔 아웃라이어 영상이 너무 적습니다. 채널을 더 추가해 보세요.");
 
   const list = rows.map((r) => `${r.video_id} | ${r.ratio.toFixed(1)}x | ${r.title_ko ?? r.title}`).join("\n");
-  const out = await claudeJson<{ patterns?: Array<{ label: string; ids: string[] }> }>(SYSTEM, list, 4000);
+  const out = await llmJson<{ patterns?: Array<{ label: string; ids: string[] }> }>(SYSTEM, list, { maxTokens: 4000 });
   const known = new Set(rows.map((r) => r.video_id));
 
   await q("DELETE FROM patterns WHERE folder_id = $1 AND format = $2", [folderId, format]);

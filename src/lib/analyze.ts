@@ -1,4 +1,4 @@
-import { claudeJson, geminiOnVideo, hasClaude, hasGemini, parseJson } from "@/lib/ai";
+import { geminiOnVideo, hasGemini, llmJson, parseJson } from "@/lib/ai";
 import { ingestVideos } from "@/lib/corpus";
 import { one, q } from "@/lib/db";
 import { videosByIds } from "@/lib/youtube";
@@ -64,15 +64,10 @@ export async function runAnalysis(videoId: string, emit: (e: AnalyzeEvent) => vo
 
     emit({ type: "step", step: 2 });
     const input = `인트로 대사:\n${raw.intro.join("\n")}\n\n전체 노트:\n${raw.notes}`;
-    const out = hasClaude()
-      ? await claudeJson<{ hook: Array<{ text: string; tag: string | null }>; claims: Array<{ claim: string; evidence: string }> }>(
-          SUMMARIZE,
-          input,
-          6000,
-        )
-      : parseJson<{ hook: Array<{ text: string; tag: string | null }>; claims: Array<{ claim: string; evidence: string }> }>(
-          await geminiOnVideo(videoId, `${SUMMARIZE}\n\n${input}`),
-        );
+    const out = await llmJson<{
+      hook: Array<{ text: string; tag: string | null }>;
+      claims: Array<{ claim: string; evidence: string }>;
+    }>(SUMMARIZE, input, { maxTokens: 8000 });
 
     const hook = out.hook.map((h) => ({ text: h.text, tag: h.tag && HOOK_TAGS[h.tag] ? h.tag : null }));
     const tags = [...new Set(hook.map((h) => h.tag).filter(Boolean))];

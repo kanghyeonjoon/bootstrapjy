@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 
-import { claudeJson, hasClaude } from "@/lib/ai";
+import { hasLLM, llmJson } from "@/lib/ai";
 import { one, q } from "@/lib/db";
 
 const refresh = () => revalidatePath("/ideas");
@@ -47,20 +47,20 @@ export async function moveIdea(id: number, chapterId: number | null): Promise<vo
  * 챕터가 하나도 없으면 할 수 없다 (그래서 Vidoutliers 도 그때는 버튼이 꺼져 있다).
  */
 export async function classifyIdeas(): Promise<number> {
-  if (!hasClaude()) throw new Error("AI 분류에는 ANTHROPIC_API_KEY 가 필요합니다.");
+  if (!hasLLM()) throw new Error("AI 분류에는 GEMINI_API_KEY 가 필요합니다 (무료).");
   const chapters = await q<{ id: number; name: string }>("SELECT id, name FROM chapters ORDER BY position, id");
   const ideas = await q<{ id: number; claim: string; evidence: string | null }>(
     "SELECT id, claim, evidence FROM ideas WHERE chapter_id IS NULL ORDER BY id LIMIT 200",
   );
   if (!chapters.length || !ideas.length) return 0;
 
-  const out = await claudeJson<Record<string, number | null>>(
+  const out = await llmJson<Record<string, number | null>>(
     `아이디어 목록을 주어진 챕터(영상 기획의 장)로 나눈다. 각 아이디어 id 에 가장 맞는 챕터 id 를, 어디에도 안 맞으면 null 을 준다.
 출력은 {"아이디어id": 챕터id|null} JSON 하나만.`,
     `챕터:\n${chapters.map((c) => `${c.id}: ${c.name}`).join("\n")}\n\n아이디어:\n${ideas
       .map((i) => `${i.id}: ${i.claim}${i.evidence ? ` — ${i.evidence.slice(0, 120)}` : ""}`)
       .join("\n")}`,
-    3000,
+    { maxTokens: 3000 },
   );
   const valid = new Set(chapters.map((c) => c.id));
   let n = 0;

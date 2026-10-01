@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 
-import { geminiOnVideo, hasGemini, claude, hasClaude } from "@/lib/ai";
+import { geminiOnVideo, hasGemini, hasLLM, llm } from "@/lib/ai";
 import { getKv, one, q, setKv } from "@/lib/db";
 import { DEFAULT_BLOCKS, type Block } from "@/lib/scripts";
 
@@ -43,7 +43,7 @@ export async function saveTone(tone: string): Promise<void> {
 
 /**
  * "내 채널에서 뽑기" — 내 채널 최근 롱폼 한 편을 Gemini 가 보고 말투를 정리한다.
- * Gemini 키가 없으면 최근 제목들로 Claude 가 짐작한다(정확도는 떨어진다).
+ * Gemini 키가 없으면 최근 제목들로 짐작한다(정확도는 떨어진다).
  */
 export async function extractTone(): Promise<string> {
   const ch = await getKv<string | null>("myChannel", process.env.MY_CHANNEL_ID ?? null);
@@ -59,7 +59,7 @@ export async function extractTone(): Promise<string> {
 - 자주 쓰는 접속어·추임새·말버릇 (실제 예시를 「」로)
 - 문장 길이와 리듬, 질문을 던지는 방식
 - 피하는 표현`;
-  if (hasGemini()) return geminiOnVideo(vids[0].video_id, ask);
-  if (hasClaude()) return claude(ask, `최근 영상 제목:\n${vids.map((v) => v.title).join("\n")}`, 800);
+  if (hasGemini()) return geminiOnVideo(vids[0].video_id, ask, { json: false });
+  if (hasLLM()) return llm(ask, `최근 영상 제목:\n${vids.map((v) => v.title).join("\n")}`, { maxTokens: 800 });
   throw new Error("말투를 뽑으려면 AI 키가 필요합니다.");
 }

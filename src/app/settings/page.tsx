@@ -11,8 +11,8 @@ export default async function Settings() {
     "SELECT COUNT(*)::text AS n, COUNT(*) FILTER (WHERE source = 'folder')::text AS f FROM channels",
   );
   const rows: Array<[string, React.ReactNode]> = [
-    ["Claude (분석·검색어·패턴)", <Status key="c" ok={hasClaude()} />],
-    ["Gemini (뜻 검색·자막)", <Status key="g" ok={hasGemini()} />],
+    ["Gemini (전체 AI · 무료)", <Status key="g" ok={hasGemini()} />],
+    ["Claude (선택 · 유료)", <Status key="c" ok={hasClaude()} />],
     ["유튜브", <Status key="y" ok={Boolean(process.env.YOUTUBE_API_KEY || process.env.YT_REFRESH_TOKEN)} />],
     [
       "영상 DB",

@@ -1,6 +1,6 @@
 import Link from "next/link";
 
-import { hasClaude } from "@/lib/ai";
+import { hasLLM } from "@/lib/ai";
 import { q } from "@/lib/db";
 import { AddIdeaButton, ChapterHeader, ClassifyButton, IdeaGroup, NewChapter } from "./ui";
 
@@ -65,7 +65,7 @@ export default async function Ideas({ searchParams }: { searchParams: Promise<{ 
       <section className="max-w-[760px] rounded-b-2xl rounded-tr-2xl border border-line bg-card/60 p-4 md:p-5">
         <ChapterHeader id={chapterId} name={title}>
           {!chapterId && (
-            <ClassifyButton disabled={!chapters.length || !(unc[0]?.n ?? 0) || !hasClaude()} />
+            <ClassifyButton disabled={!chapters.length || !(unc[0]?.n ?? 0) || !hasLLM()} />
           )}
           <AddIdeaButton chapterId={chapterId} />
         </ChapterHeader>
