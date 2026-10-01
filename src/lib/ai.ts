@@ -22,8 +22,12 @@ const GEMINI_LITE = process.env.GEMINI_LITE_MODEL ?? "gemini-3.5-flash-lite";
 const EMBED_MODEL = process.env.GEMINI_EMBED_MODEL ?? "gemini-embedding-2";
 export const EMBED_DIM = 768;
 
-export const hasClaude = () => (process.env.ANTHROPIC_API_KEY ?? "").startsWith("sk-ant-");
-export const hasGemini = () => (process.env.GEMINI_API_KEY ?? "").length > 20;
+// 키를 붙여 넣을 때 앞뒤 공백이 딸려 오는 일이 잦다 (2026-10 실제로 " AIza…" 때문에 400). 항상 다듬어 쓴다
+const claudeKey = () => (process.env.ANTHROPIC_API_KEY ?? "").trim();
+const geminiKey = () => (process.env.GEMINI_API_KEY ?? "").trim();
+
+export const hasClaude = () => claudeKey().startsWith("sk-ant-");
+export const hasGemini = () => geminiKey().length > 20;
 /** 글·판단을 맡길 AI 가 하나라도 있는가 */
 export const hasLLM = () => hasClaude() || hasGemini();
 
@@ -74,7 +78,7 @@ async function claude(system: string, user: string, maxTokens: number): Promise<
     method: "POST",
     headers: {
       "content-type": "application/json",
-      "x-api-key": process.env.ANTHROPIC_API_KEY!,
+      "x-api-key": claudeKey(),
       "anthropic-version": "2023-06-01",
     },
     body: JSON.stringify({
@@ -110,7 +114,7 @@ async function gemini<T>(path: string, body: unknown): Promise<T> {
   for (let attempt = 1; ; attempt++) {
     const res = await fetch(`${G}/${path}`, {
       method: "POST",
-      headers: { "content-type": "application/json", "x-goog-api-key": process.env.GEMINI_API_KEY! },
+      headers: { "content-type": "application/json", "x-goog-api-key": geminiKey() },
       body: JSON.stringify(body),
     });
     if (res.ok) return (await res.json()) as T;
