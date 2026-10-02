@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>레퍼런스</title>
+<link rel="icon" href="icon.png">
+<style>
+  :root { --paper:#FBF8F1; --ink:#1C1A17; --sub:#8A8272; --orange:#E88040; }
+  @media (prefers-color-scheme: dark) { :root { --paper:#161513; --ink:#F0ECE4; --sub:#9A9282; } }
+  html,body { height:100%; margin:0; }
+  body { background:var(--paper); color:var(--ink); display:flex; align-items:center; justify-content:center;
+         font-family:"Pretendard","Malgun Gothic",system-ui,sans-serif; }
+  .wrap { text-align:center; }
+  img { width:112px; height:112px; filter:drop-shadow(0 10px 24px rgba(0,0,0,.18)); animation:float 2.4s ease-in-out infinite; }
+  @keyframes float { 50% { transform:translateY(-6px); } }
+  h1 { font-size:26px; font-weight:800; letter-spacing:-.02em; margin:22px 0 6px; }
+  p { margin:0; color:var(--sub); font-size:14px; }
+  .bar { width:220px; height:4px; border-radius:4px; background:rgba(138,130,114,.2); margin:26px auto 0; overflow:hidden; }
+  .bar i { display:block; height:100%; width:35%; border-radius:4px; background:var(--orange); animation:slide 1.2s ease-in-out infinite; }
+  @keyframes slide { 0% { transform:translateX(-100%); } 100% { transform:translateX(300%); } }
+  small { display:block; margin-top:14px; color:var(--sub); font-size:12px; opacity:.8; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <img src="icon.png" alt="">
+  <h1>레퍼런스</h1>
+  <p id="msg">준비하는 중이에요</p>
+  <div class="bar"><i></i></div>
+  <small id="hint">처음 한 번(또는 업데이트 직후)은 1분 정도 걸려요</small>
+</div>
+<script>
+  // 서버가 뜰 때까지 아이콘을 하나 불러 보고, 뜨면 대시보드로 넘어간다
+  const URL_BASE = "http://localhost:3100";
+  const started = Date.now();
+  function ping() {
+    const im = new Image();
+    im.onload = () => { document.getElementById("msg").textContent = "열고 있어요"; location.href = URL_BASE + "/dashboard"; };
+    im.onerror = () => {
+      const s = Math.round((Date.now() - started) / 1000);
+      if (s > 240) document.getElementById("hint").textContent = "오래 걸리네요. 창을 닫고 다시 실행해 보세요.";
+      setTimeout(ping, 1000);
+    };
+    im.src = URL_BASE + "/icon.png?t=" + Date.now();
+  }
+  ping();
+</script>
+</body>
+</html>
