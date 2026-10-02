@@ -196,4 +196,23 @@ CREATE TABLE IF NOT EXISTS jobs (
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- ── 최신성 · 결 (2026-10 추가) ────────────────────────────────
+-- 레퍼런스 폴더와 결이 얼마나 비슷한 채널인가 (AI 판정 0~3, 폴더 채널은 3). NULL = 아직 안 봄
+ALTER TABLE channels ADD COLUMN IF NOT EXISTS fit SMALLINT;
+-- 마지막 RSS 확인 시각 (RSS 는 할당량 0 이라 자주 본다)
+ALTER TABLE channels ADD COLUMN IF NOT EXISTS rss_at TIMESTAMPTZ;
+-- 뜨는 중 점수: 30일 안 된 영상의 하루 조회수 ÷ 채널의 보통 하루 조회수
+ALTER TABLE videos ADD COLUMN IF NOT EXISTS rising REAL;
+CREATE INDEX IF NOT EXISTS videos_rising_idx ON videos (rising DESC) WHERE rising IS NOT NULL;
+-- 조회수 기록 (RSS 를 볼 때마다 한 줄). 며칠 쌓이면 진짜 증가 속도를 잰다
+CREATE TABLE IF NOT EXISTS view_snapshots (
+  video_id  TEXT NOT NULL,
+  at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+  views     BIGINT NOT NULL,
+  PRIMARY KEY (video_id, at)
+);
+-- 영상 찾기 결과의 묶음: proven(검증된 영상) | recent(최근 30일 · 뜨는 중)
+ALTER TABLE find_hits ADD COLUMN IF NOT EXISTS section TEXT NOT NULL DEFAULT 'proven';
+ALTER TABLE finds ADD COLUMN IF NOT EXISTS recent_status TEXT;
 `;

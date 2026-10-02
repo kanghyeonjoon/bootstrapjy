@@ -13,6 +13,8 @@ export interface VideoCardData {
   thumbnailUrl: string | null;
   viewCount: number | null;
   ratio: number | null;
+  /** 뜨는 중 점수 (30일 안 된 영상만): 하루 조회수 ÷ 채널의 보통 하루 조회수 */
+  rising: number | null;
   saved: boolean;
   /** 분석이 끝난 영상이면 그 분석 id */
   analysisId: number | null;
@@ -23,7 +25,7 @@ export interface VideoCardData {
 /** v = videos, c = channels 별칭을 쓰는 쿼리에 붙인다 */
 export const CARD_COLUMNS = `
   v.video_id, v.channel_id, v.title, v.title_ko, c.title AS channel_title, v.published_at,
-  v.duration_sec, v.format, v.thumbnail_url, v.view_count, v.ratio,
+  v.duration_sec, v.format, v.thumbnail_url, v.view_count, v.ratio, v.rising,
   EXISTS (SELECT 1 FROM saved_videos s WHERE s.video_id = v.video_id) AS saved,
   (SELECT a.id FROM analyses a WHERE a.video_id = v.video_id AND a.status = 'done'
     ORDER BY a.id DESC LIMIT 1) AS analysis_id,
@@ -41,6 +43,7 @@ interface CardRow {
   thumbnail_url: string | null;
   view_count: string | number | null;
   ratio: number | null;
+  rising: number | null;
   saved: boolean;
   analysis_id: number | null;
   in_folder: boolean;
@@ -59,6 +62,7 @@ export function toCard(r: CardRow): VideoCardData {
     thumbnailUrl: r.thumbnail_url,
     viewCount: r.view_count === null ? null : Number(r.view_count),
     ratio: r.ratio,
+    rising: r.rising,
     saved: r.saved,
     analysisId: r.analysis_id,
     inFolder: r.in_folder,

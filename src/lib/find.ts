@@ -29,22 +29,23 @@ export type FindEvent =
 const MIN_RATIO = 2;
 const CANDIDATES = 100;
 
-const PLAN = `너는 유튜브 레퍼런스 영상을 찾는 리서처다. 사용자가 만들고 싶은 영상의 주제나 생각을 말한다.
+const PLAN = `너는 유튜브 레퍼런스 영상을 찾는 리서처다. 사용자는 영상을 기획 중이고, 하고 싶은 말(주장·메시지)을 대략 적는다.
+그 말과 "비슷한 이야기를 해서 이미 잘 된 영상"을 찾는 게 목적이다. 제목·썸네일 문구를 참고하려는 것이다.
 
-- intent: "어떤 영상이 정답인지" 한 문장. 핵심 소재와 시청자가 얻는 것을 넣는다.
-- ko: 같은 소재로 이미 잘 된 영상을 찾을 한국어 유튜브 검색어 4개 (2~5단어, 서로 다른 각도).
-- en: 같은 소재의 영어권 인기 영상을 찾을 영어 검색어 1개.
+- intent: 사용자가 하려는 핵심 주장을 한 문장으로 (예: "불안은 마음보다 몸(자율신경)부터 진정시켜야 풀린다").
+- ko: 그런 주장을 담은 영상이 쓸 법한 한국어 유튜브 검색어 4개 (2~5단어, 서로 다른 각도).
+- en: 같은 이야기를 하는 영어권 영상을 찾을 영어 검색어 1개.
 
 출력은 JSON 하나만: {"intent":"...","ko":["..."],"en":"..."}`;
 
-const PICK = `너는 유튜브 레퍼런스 영상을 고르는 편집자다. 사용자는 영상을 기획 중이고, 참고할 "이미 잘 된 영상"을 찾는다.
-후보 영상 목록(배수 = 채널 평소 대비 조회수)에서 기획에 참고가 될 영상을 골라 관련도순으로 나열한다.
+/** 고르는 기준: 같은 주제가 아니라 "같은 이야기를 하는가" */
+export const PICK = `너는 유튜브 레퍼런스 영상을 고르는 편집자다. 사용자는 영상을 기획 중이고, 자기가 하려는 말과 비슷한 이야기를 해서 잘 된 영상을 찾아 제목·썸네일 문구를 참고하려 한다.
+후보 영상 목록(배수 = 채널 평소 대비 조회수)에서 골라 관련도순으로 나열한다.
 
-- 요청의 핵심 소재를 직접 다루는 영상을 맨 앞에.
-- 그다음, 같은 시청자의 같은 고민·욕구를 다루는 가까운 주제도 넣는다 (예: "미주신경 진정" 요청이면 자율신경·호흡·불안 완화 영상도 참고가 된다).
-- 소재가 분명히 다른 영상만 뺀다.
-- 10~15개를 목표로 한다. 후보에 맞는 게 정말 적을 때만 그보다 적게.
-- 같은 채널은 3편까지만.
+- 사용자의 핵심 주장과 같은 이야기(같은 메시지·같은 결론·같은 해법)를 하는 영상을 맨 앞에.
+- 그다음, 같은 시청자의 같은 고민을 다른 각도로 풀지만 메시지가 가까운 영상.
+- 주제 단어만 겹치고 하는 말이 다른 영상은 뺀다.
+- 10~15개를 목표로 한다. 맞는 게 정말 적을 때만 그보다 적게. 같은 채널은 3편까지만.
 
 출력은 JSON 하나만: {"ids":["영상ID", ...]}`;
 
@@ -97,6 +98,8 @@ export async function runFind(
       minRatio: MIN_RATIO,
       includeShorts: input.includeShorts,
       limit: CANDIDATES,
+      // 결이 확실히 다른 채널(0점)은 뺀다. 아직 안 본 채널은 둔다
+      where: "COALESCE(c.fit, 1) > 0",
       fast: true,
     });
     await q("UPDATE finds SET corpus_size = $2, candidates = $3 WHERE id = $1", [findId, total, cands.length]);
@@ -110,11 +113,11 @@ export async function runFind(
       const list = pool
         .map(
           (c) =>
-            `${c.video_id} | ${c.ratio.toFixed(1)}x | ${c.channel_title} | ${c.title_ko ?? c.title} | ${(c.description ?? "").replace(/\s+/g, " ").slice(0, 80)}`,
+            `${c.video_id} | ${(c.ratio ?? 0).toFixed(1)}x | ${c.channel_title} | ${c.title_ko ?? c.title} | ${(c.description ?? "").replace(/\s+/g, " ").slice(0, 80)}`,
         )
         .join("\n");
       try {
-        const out = await llmJson<{ ids: string[] }>(PICK, `요청: ${prompt}\n정답 기준: ${plan.intent}\n\n${list}`, {
+        const out = await llmJson<{ ids: string[] }>(PICK, `하려는 말: ${prompt}\n핵심 주장: ${plan.intent}\n\n${list}`, {
           maxTokens: 1200,
           lite: true,
           fast: true,

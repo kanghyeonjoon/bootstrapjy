@@ -4,6 +4,16 @@ import { getKv, q, setKv } from "@/lib/db";
 import { runPatterns } from "@/lib/patterns";
 import { searchOutliers } from "@/lib/search";
 import { searchVideos } from "@/lib/youtube";
+import { classifyChannelFit } from "@/lib/fit";
+
+/** 결 판정 후, 결이 다른 채널(0~1점)에서 고른 영상은 피드에서 뺀다 */
+export async function pruneOffNiche(): Promise<void> {
+  await classifyChannelFit(400).catch(() => 0);
+  await q(
+    `DELETE FROM outlier_feed WHERE video_id IN (
+       SELECT v.video_id FROM videos v JOIN channels c ON c.channel_id = v.channel_id WHERE c.fit IS NOT NULL AND c.fit < 2)`,
+  );
+}
 
 /**
  * 아웃라이어 탭 — 연결한 폴더의 "반복 주제(패턴)"를 기준으로, 영상 DB 전체에서
@@ -73,14 +83,16 @@ async function pickForPattern(folderId: number, label: string): Promise<number> 
     texts: [label],
     minRatio: MIN_RATIO,
     limit: 40,
-    where: `v.video_id NOT IN (SELECT video_id FROM outlier_feed) AND v.published_at >= now() - interval '1 year'`,
+    // 결이 맞는 채널만 (아직 안 본 채널은 일단 두고, 결 판정이 끝나면 걸러진다)
+    where: `v.video_id NOT IN (SELECT video_id FROM outlier_feed) AND v.published_at >= now() - interval '1 year'
+            AND COALESCE(c.fit, 2) >= 2`,
   });
   if (!cands.length) return 0;
 
   let ids = cands.slice(0, PER_PATTERN).map((c) => c.video_id);
   if (hasLLM()) {
     try {
-      const list = cands.map((c) => `${c.video_id} | ${c.ratio.toFixed(1)}x | ${c.channel_title} | ${c.title_ko ?? c.title}`).join("\n");
+      const list = cands.map((c) => `${c.video_id} | ${(c.ratio ?? 0).toFixed(1)}x | ${c.channel_title} | ${c.title_ko ?? c.title}`).join("\n");
       const out = await llmJson<{ ids: string[] }>(PICK, `주제: ${label}\n\n${list}`, { maxTokens: 800, lite: true });
       const known = new Set(cands.map((c) => c.video_id));
       ids = [...new Set(out.ids ?? [])].filter((id) => known.has(id)).slice(0, PER_PATTERN);

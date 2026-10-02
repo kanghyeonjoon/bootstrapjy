@@ -96,6 +96,16 @@ function bestThumb(t: Record<string, { url?: string }> | undefined): string | nu
 
 const num = (s: string | undefined) => (s === undefined ? null : Number(s));
 
+/**
+ * 문자 단위로 자르고, 깨진 문자를 고친다.
+ * 그냥 .slice() 로 자르면 이모지·장식 글자(𝑯 같은 2칸짜리 문자)가 반으로 쪼개져
+ * DB 가 그 묶음 전체를 거부한다 (2026-10 실제로 RSS 갱신이 통째로 멈췄던 원인).
+ */
+export function cleanText(s: string, max?: number): string {
+  const whole = s.toWellFormed();
+  return max === undefined ? whole : Array.from(whole).slice(0, max).join("");
+}
+
 export interface YtVideo {
   videoId: string;
   channelId: string;
@@ -137,8 +147,8 @@ function toVideo(v: RawVideo): YtVideo | null {
     videoId: v.id,
     channelId: s.channelId,
     channelTitle: s.channelTitle ?? "",
-    title: s.title ?? "(제목 없음)",
-    description: (s.description ?? "").slice(0, 600),
+    title: cleanText(s.title ?? "(제목 없음)"),
+    description: cleanText(s.description ?? "", 600),
     publishedAt: s.publishedAt,
     durationSec,
     format: formatOf(durationSec),
@@ -170,7 +180,14 @@ export async function videosByIds(ids: string[]): Promise<YtVideo[]> {
 /** 키워드 검색 — 100유닛. 결과에 조회수가 없어서 videos 로 한 번 더 받는다(+1). */
 export async function searchVideos(
   query: string,
-  opts: { lang?: string; region?: string; order?: "relevance" | "viewCount"; max?: number } = {},
+  opts: {
+    lang?: string;
+    region?: string;
+    order?: "relevance" | "viewCount";
+    max?: number;
+    /** 이 날짜 이후 올라온 영상만 (최근 30일 찾기) */
+    publishedAfter?: string;
+  } = {},
 ): Promise<YtVideo[]> {
   const r = await get<{ items?: Array<{ id?: { videoId?: string } }> }>(
     "search",
@@ -181,6 +198,7 @@ export async function searchVideos(
       order: opts.order ?? "relevance",
       relevanceLanguage: opts.lang,
       regionCode: opts.region,
+      publishedAfter: opts.publishedAfter,
       maxResults: opts.max ?? 50,
     },
     100,

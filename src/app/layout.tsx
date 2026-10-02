@@ -1,12 +1,14 @@
 import type { Metadata, Viewport } from "next";
 import { GeistSans } from "geist/font/sans";
 import { headers } from "next/headers";
+import { after } from "next/server";
 
 import { Sidebar } from "@/components/Sidebar";
 import { Toaster } from "@/components/Toast";
 import { q } from "@/lib/db";
 import { corpusSize } from "@/lib/corpus";
 import { DAILY_QUOTA, quotaToday } from "@/lib/youtube";
+import { maybeSweepRss } from "@/lib/rss";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -33,6 +35,8 @@ async function usage() {
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
   const path = (await headers()).get("x-pathname") ?? "";
   const bare = path.startsWith("/login");
+  // 사이트를 쓰는 동안 3시간마다 RSS 로 새 영상을 반영한다 (할당량 0, 사용자는 기다리지 않음)
+  if (!bare) after(() => maybeSweepRss());
 
   return (
     <html lang="ko" className={GeistSans.variable} suppressHydrationWarning>

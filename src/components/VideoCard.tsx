@@ -122,6 +122,14 @@ export function VideoCard({
           )}
         </div>
 
+        {v.rising !== null && v.rising >= 2 && (
+          <span
+            className="mt-1.5 w-fit rounded bg-[#E07B3F]/15 px-1.5 py-0.5 text-[10.5px] font-semibold text-[#B85A22] dark:text-[#F0A070]"
+            title="올라온 지 30일 안 된 영상의 하루 조회수 ÷ 이 채널의 보통 하루 조회수"
+          >
+            🔥 뜨는 중 {v.rising >= 10 ? Math.round(v.rising) : v.rising.toFixed(1)}x
+          </span>
+        )}
         {v.analysisId && (
           <span className="mt-1.5 w-fit rounded bg-[#7FA968]/15 px-1.5 py-0.5 text-[10.5px] font-medium text-[#4E7A3A] dark:text-[#9CC686]">
             자막 확인됨

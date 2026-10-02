@@ -16,7 +16,7 @@ export interface Hit {
   title: string;
   title_ko: string | null;
   channel_title: string;
-  ratio: number;
+  ratio: number | null;
   description: string | null;
 }
 
@@ -28,7 +28,7 @@ export interface SearchOpts {
   minRatio?: number;
   includeShorts?: boolean;
   limit?: number;
-  /** 추가 조건 (v = videos 별칭) */
+  /** 추가 조건 (v = videos, c = channels 별칭) */
   where?: string;
   /** 사용자가 기다리는 요청이면 임베딩 한도에 걸려도 기다리지 않는다 */
   fast?: boolean;
@@ -38,7 +38,8 @@ export async function searchOutliers(o: SearchOpts): Promise<Hit[]> {
   const limit = o.limit ?? 100;
   const params: unknown[] = [o.minRatio ?? 2];
   const base = [
-    "v.ratio >= $1",
+    // minRatio 0 이면 배수를 아직 모르는 영상(처음 보는 채널)도 들인다
+    "($1 = 0 OR v.ratio >= $1)",
     o.includeShorts ? "" : "v.format = 'long'",
     "v.channel_id NOT IN (SELECT channel_id FROM hidden_channels)",
     "v.video_id NOT IN (SELECT video_id FROM dismissed_videos)",

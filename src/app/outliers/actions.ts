@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 
 import { embedPending, translatePending } from "@/lib/corpus";
-import { expandOutliers, pickOutliers, setFolderLink } from "@/lib/outliers";
+import { expandOutliers, pickOutliers, pruneOffNiche, setFolderLink } from "@/lib/outliers";
 
 export async function saveFolderLink(pinned: number[]): Promise<void> {
   await setFolderLink(pinned);
@@ -19,6 +19,7 @@ export async function refreshOutliers(): Promise<{ added: number; patterns: numb
   const r = await pickOutliers();
   revalidatePath("/outliers");
   after(async () => {
+    await pruneOffNiche();
     await expandOutliers(120_000).catch(() => 0);
     await translatePending(150).catch(() => 0);
     await embedPending(180, 130_000).catch(() => 0);
