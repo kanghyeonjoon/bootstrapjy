@@ -7,3 +7,6 @@ next-env.d.ts
 .next-app
 desktop/*.lnk
 .next-test
+
+.vercel
+.env*
