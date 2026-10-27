@@ -12,7 +12,8 @@ import {
   scriptFromVideo,
   toggleSave,
 } from "@/app/actions";
-import { IconBookmark, IconMore } from "@/components/icons";
+import { CommentSeeds } from "@/components/CommentSeeds";
+import { IconBookmark, IconComment, IconMore } from "@/components/icons";
 import { toast } from "@/components/Toast";
 import { compact, duration, ratioColor, ratioText, since, ymd } from "@/lib/format";
 import type { VideoCardData } from "@/lib/videos";
@@ -46,6 +47,7 @@ export function VideoCard({
   const router = useRouter();
   const [saved, setSaved] = useState(v.saved);
   const [gone, setGone] = useState(false);
+  const [comments, setComments] = useState(false);
   const [, start] = useTransition();
   useEffect(() => setSaved(v.saved), [v.saved]);
   if (gone) return null;
@@ -144,6 +146,14 @@ export function VideoCard({
             >
               분석하기 →
             </Link>
+            <button
+              onClick={() => setComments(true)}
+              aria-label="댓글 씨앗"
+              title="댓글 씨앗 — 질문·반박·경험담·요청만 걸러 보기"
+              className="rounded-lg border border-line px-2.5 text-faint hover:text-ink"
+            >
+              <IconComment className="h-4 w-4" />
+            </button>
             {!hideSave && <button
               onClick={onSave}
               aria-label={saved ? "저장 취소" : "저장"}
@@ -156,6 +166,7 @@ export function VideoCard({
           {footer}
         </div>
       </div>
+      {comments && <CommentSeeds videoId={v.videoId} title={title} onClose={() => setComments(false)} />}
     </article>
   );
 }

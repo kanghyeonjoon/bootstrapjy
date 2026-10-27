@@ -215,4 +215,46 @@ CREATE TABLE IF NOT EXISTS view_snapshots (
 -- 영상 찾기 결과의 묶음: proven(검증된 영상) | recent(최근 30일 · 뜨는 중)
 ALTER TABLE find_hits ADD COLUMN IF NOT EXISTS section TEXT NOT NULL DEFAULT 'proven';
 ALTER TABLE finds ADD COLUMN IF NOT EXISTS recent_status TEXT;
+
+-- ── 세트 (2026-10 추가) ───────────────────────────────────────
+-- 세트 = 내가 운영하는 개인 채널 하나 + 그 채널의 레퍼런스 폴더들. 분야가 다른 채널끼리 섞이지 않게
+-- 아웃라이어·결 판정을 세트 단위로 따로 돈다. color 는 화면에서 세트를 구분하는 색 번호.
+CREATE TABLE IF NOT EXISTS sets (
+  id             SERIAL PRIMARY KEY,
+  name           TEXT NOT NULL,
+  my_channel_id  TEXT REFERENCES channels(channel_id) ON DELETE SET NULL,
+  color          SMALLINT NOT NULL DEFAULT 0,
+  position       INT NOT NULL DEFAULT 0,
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+ALTER TABLE folders ADD COLUMN IF NOT EXISTS set_id INT REFERENCES sets(id) ON DELETE CASCADE;
+CREATE INDEX IF NOT EXISTS folders_set_idx ON folders (set_id);
+-- 세트별 채널 결 점수 (0~3). 세트마다 기준이 다르니 채널 하나가 세트별로 다른 점수를 가진다
+CREATE TABLE IF NOT EXISTS set_channel_fit (
+  set_id      INT NOT NULL REFERENCES sets(id) ON DELETE CASCADE,
+  channel_id  TEXT NOT NULL REFERENCES channels(channel_id) ON DELETE CASCADE,
+  fit         SMALLINT NOT NULL,
+  PRIMARY KEY (set_id, channel_id)
+);
+-- 세트별 아웃라이어 피드. 같은 영상이 여러 세트에 따로 들어갈 수 있다 (기존 outlier_feed 는 더 안 쓴다)
+CREATE TABLE IF NOT EXISTS set_outlier_feed (
+  set_id     INT NOT NULL REFERENCES sets(id) ON DELETE CASCADE,
+  video_id   TEXT NOT NULL REFERENCES videos(video_id) ON DELETE CASCADE,
+  folder_id  INT REFERENCES folders(id) ON DELETE SET NULL,
+  pattern    TEXT,
+  added_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (set_id, video_id)
+);
+
+-- ── 댓글 씨앗 (2026-10 추가) ──────────────────────────────────
+-- 영상 댓글을 받아 농담·칭찬을 걸러내고 질문·반박·경험담·요청으로 묶은 결과. 영상당 한 줄, 다시 돌리면 덮어쓴다.
+-- comments = 남긴 댓글 [{id, text, likes, replies, kind}], seeds = 댓글에서 뽑은 주제 [{topic, kind, ids}]
+CREATE TABLE IF NOT EXISTS comment_digests (
+  video_id    TEXT PRIMARY KEY REFERENCES videos(video_id) ON DELETE CASCADE,
+  fetched     INT NOT NULL DEFAULT 0,
+  comments    JSONB NOT NULL DEFAULT '[]',
+  seeds       JSONB NOT NULL DEFAULT '[]',
+  error       TEXT,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 `;

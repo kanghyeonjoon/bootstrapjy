@@ -3,10 +3,10 @@
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState, useTransition } from "react";
 
-import { Modal, Segment, Slider } from "@/app/dashboard/ui";
+import { Segment, Slider } from "@/app/dashboard/ui";
 import { IconChevron, IconSearch } from "@/components/icons";
 import { toast } from "@/components/Toast";
-import { refreshOutliers, saveFolderLink } from "./actions";
+import { refreshOutliers } from "./actions";
 import type { OutlierParams } from "./page";
 
 function useParam() {
@@ -24,20 +24,9 @@ function useParam() {
   };
 }
 
-export function OutlierToolbar({
-  sp,
-  folders,
-  connected,
-  pinned,
-}: {
-  sp: OutlierParams;
-  folders: Array<{ id: number; name: string; n: number }>;
-  connected: number[];
-  pinned: number[];
-}) {
+export function OutlierToolbar({ sp, setId, switcher }: { sp: OutlierParams; setId: number; switcher: React.ReactNode }) {
   const set = useParam();
   const [text, setText] = useState(sp.q ?? "");
-  const [linkOpen, setLinkOpen] = useState(false);
   const [busy, start] = useTransition();
 
   // 입력이 멈추면 검색
@@ -58,7 +47,7 @@ export function OutlierToolbar({
             onClick={() =>
               start(async () => {
                 try {
-                  const r = await refreshOutliers();
+                  const r = await refreshOutliers(setId);
                   toast(`패턴 ${r.patterns}개로 새 영상 ${r.added}개를 골랐습니다`);
                 } catch (e) {
                   toast((e as Error).message);
@@ -69,13 +58,12 @@ export function OutlierToolbar({
           >
             {busy ? "고르는 중…" : "지금 고르기"}
           </button>
-          <button onClick={() => setLinkOpen(true)} className="rounded-lg border border-line px-3 py-1.5 text-[12.5px]">
-            폴더 연결
-          </button>
         </div>
       </div>
 
-      <div className="mt-5 flex flex-wrap items-center gap-2">
+      <div className="mt-4">{switcher}</div>
+
+      <div className="flex flex-wrap items-center gap-2">
         <label className="flex min-w-[200px] flex-1 items-center gap-2 rounded-lg border border-line bg-card px-3 py-2">
           <IconSearch className="h-4 w-4 text-faint" />
           <input
@@ -96,8 +84,6 @@ export function OutlierToolbar({
         />
         <Filter sp={sp} />
       </div>
-
-      {linkOpen && <FolderLinkModal folders={folders} connected={connected} pinned={pinned} onClose={() => setLinkOpen(false)} />}
     </>
   );
 }
@@ -165,80 +151,21 @@ function Filter({ sp }: { sp: OutlierParams }) {
   );
 }
 
-function FolderLinkModal({
-  folders,
-  connected,
-  pinned,
-  onClose,
-}: {
-  folders: Array<{ id: number; name: string; n: number }>;
-  connected: number[];
-  pinned: number[];
-  onClose: () => void;
-}) {
-  const [sel, setSel] = useState<number[]>(pinned);
-  const [, start] = useTransition();
-  return (
-    <Modal title="폴더 연결" onClose={onClose}>
-      <p className="text-[13px] font-semibold">아웃라이어를 고를 폴더</p>
-      <p className="mt-1 text-[12.5px] leading-relaxed text-sub">
-        선택한 폴더를 우선 연결해요. 나머지는 채널이 많은 폴더부터 자동으로 채워져요.
-        <br />
-        폴더의 반복 주제(패턴)를 기준으로 골라요. 폴더 연결 변경은 다음 갱신부터 적용돼요.
-      </p>
-      <ul className="mt-4 space-y-1.5">
-        {folders.map((f) => {
-          const on = sel.includes(f.id);
-          return (
-            <li key={f.id}>
-              <label className={`flex cursor-pointer items-center justify-between rounded-xl border px-3.5 py-2.5 ${on ? "border-ink" : "border-line"}`}>
-                <span>
-                  <span className="text-[13.5px] font-medium">{f.name}</span>
-                  <span className="ml-2 text-[11.5px] text-faint">
-                    채널 {f.n}개{!on && connected.includes(f.id) ? " · 자동 연결됨" : ""}
-                  </span>
-                </span>
-                <input
-                  type="checkbox"
-                  checked={on}
-                  onChange={() => setSel((s) => (on ? s.filter((x) => x !== f.id) : [...s, f.id]))}
-                  className="accent-current"
-                />
-              </label>
-            </li>
-          );
-        })}
-      </ul>
-      <div className="mt-5 flex justify-between">
-        <button onClick={() => setSel([])} className="rounded-lg px-3 py-2 text-[12.5px] text-sub">
-          자동 연결로 초기화
-        </button>
-        <button
-          onClick={() => start(async () => (await saveFolderLink(sel), toast("폴더 연결을 저장했습니다"), onClose()))}
-          className="rounded-lg bg-ink px-4 py-2 text-[13px] font-semibold text-paper"
-        >
-          연결 저장
-        </button>
-      </div>
-    </Modal>
-  );
-}
-
 /** 피드가 비어 있을 때 들어오면 바로 고르기를 돌리고, 끝나면 화면을 새로 그린다 */
-export function AutoPick() {
+export function AutoPick({ setId }: { setId: number }) {
   const router = useRouter();
-  const [msg, setMsg] = useState("내 폴더의 반복 주제(패턴)로 아웃라이어를 고르는 중");
+  const [msg, setMsg] = useState("이 세트의 반복 주제(패턴)로 아웃라이어를 고르는 중");
   const started = useRef(false);
   useEffect(() => {
     if (started.current) return;
     started.current = true;
-    refreshOutliers()
+    refreshOutliers(setId)
       .then((r) => {
         if (r.added) router.refresh();
         else setMsg(r.patterns ? "아직 이 패턴과 맞는 영상이 DB 에 없어요. 밤사이 DB 가 넓어지면 채워집니다." : "패턴을 찾지 못했어요. 대시보드 → 패턴 분석을 먼저 해 주세요.");
       })
       .catch((e) => setMsg((e as Error).message));
-  }, [router]);
+  }, [router, setId]);
   return (
     <div className="mt-10 rounded-2xl border border-line bg-card/60 px-4 py-14 text-center text-sm">
       {msg}

@@ -293,6 +293,51 @@ export async function recentUploadIds(uploadsPlaylistId: string, max = 50): Prom
   return out.slice(0, max);
 }
 
+export interface YtComment {
+  id: string;
+  text: string;
+  likes: number;
+  replies: number;
+}
+
+/**
+ * 영상의 최상위 댓글 (100개당 1유닛). 유튜브 "인기 댓글" 순서(relevance)로 받고 좋아요 순으로 다시 세운다.
+ * 댓글을 막아 둔 영상은 403 이 오는데, 오류가 아니라 빈 목록으로 돌려준다.
+ */
+export async function topComments(videoId: string, max = 200): Promise<YtComment[] | null> {
+  const out: YtComment[] = [];
+  let pageToken: string | undefined;
+  try {
+    while (out.length < max) {
+      const r = await get<{
+        items?: Array<{
+          id: string;
+          snippet?: {
+            totalReplyCount?: number;
+            topLevelComment?: { snippet?: { textOriginal?: string; textDisplay?: string; likeCount?: number } };
+          };
+        }>;
+        nextPageToken?: string;
+      }>(
+        "commentThreads",
+        { part: "snippet", videoId, order: "relevance", textFormat: "plainText", maxResults: 100, pageToken },
+        1,
+      );
+      for (const it of r.items ?? []) {
+        const s = it.snippet?.topLevelComment?.snippet;
+        const text = cleanText((s?.textOriginal ?? s?.textDisplay ?? "").trim(), 600);
+        if (text) out.push({ id: it.id, text, likes: s?.likeCount ?? 0, replies: it.snippet?.totalReplyCount ?? 0 });
+      }
+      pageToken = r.nextPageToken;
+      if (!pageToken) break;
+    }
+  } catch (e) {
+    if (e instanceof YouTubeError && e.status === 403 && /disabled/i.test(e.message)) return null;
+    throw e;
+  }
+  return out.slice(0, max).sort((a, b) => b.likes - a.likes);
+}
+
 export async function quotaToday(): Promise<number> {
   // 유튜브 할당량은 태평양 시간 자정에 초기화된다
   const rows = await q<{ n: string | null }>(

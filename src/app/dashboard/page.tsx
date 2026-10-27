@@ -2,14 +2,17 @@ import Link from "next/link";
 
 import { CardGrid, VideoCard } from "@/components/VideoCard";
 import { q } from "@/lib/db";
+import { setColor } from "@/lib/set-colors";
+import { listSets, pickSet, setOfFolder } from "@/lib/sets";
 import { CARD_COLUMNS, cards } from "@/lib/videos";
 import {
   AddChannelButton,
   ChannelGrid,
   DeleteFolderButton,
-  EmptyFolders,
+  EmptySets,
   FolderTabs,
   PatternButton,
+  SetSwitcher,
   Toolbar,
 } from "./ui";
 
@@ -17,6 +20,7 @@ export const dynamic = "force-dynamic";
 export const metadata = { title: "대시보드" };
 
 export interface DashParams {
+  set?: string;
   folder?: string;
   mode?: "video" | "channel" | "pattern";
   format?: "long" | "short";
@@ -35,37 +39,57 @@ const PAGE = 48;
 
 export default async function Dashboard({ searchParams }: { searchParams: Promise<DashParams> }) {
   const sp = await searchParams;
-  const folders = await q<{ id: number; name: string; n: number }>(
-    `SELECT f.id, f.name, (SELECT COUNT(*)::int FROM folder_channels fc WHERE fc.folder_id = f.id) AS n
-       FROM folders f ORDER BY f.position, f.id`,
-  );
-
-  if (folders.length === 0) {
+  const sets = await listSets();
+  if (sets.length === 0) {
     return (
       <Shell>
-        <EmptyFolders />
+        <EmptySets />
       </Shell>
     );
   }
 
+  // 폴더 주소(?folder=)가 오면 그 폴더의 세트를, 아니면 ?set= 을, 둘 다 없으면 첫 세트를 연다
+  const folderSet = sp.folder ? await setOfFolder(Number(sp.folder)) : null;
+  const set = pickSet(sets, folderSet ? String(folderSet) : sp.set)!;
+  const folders = await q<{ id: number; name: string; n: number }>(
+    `SELECT f.id, f.name, (SELECT COUNT(*)::int FROM folder_channels fc WHERE fc.folder_id = f.id) AS n
+       FROM folders f WHERE f.set_id = $1 ORDER BY f.position, f.id`,
+    [set.id],
+  );
   const folder = folders.find((f) => String(f.id) === sp.folder) ?? folders[0];
   const mode = sp.mode ?? "video";
   const format = sp.format ?? "long";
+  const color = setColor(set.color);
+
+  if (!folder) {
+    return (
+      <Shell>
+        <SetSwitcher sets={sets} active={set.id} base="/dashboard" manage />
+        <FolderTabs folders={folders} active={-1} setId={set.id} color={set.color} />
+        <section className="rounded-b-2xl rounded-tr-2xl border border-line bg-card/60 p-4 md:p-5" style={{ borderTop: `3px solid ${color}` }}>
+          <p className="py-16 text-center text-sm text-sub">
+            이 세트에는 레퍼런스 폴더가 없습니다. 위의 <b>+ 새 폴더</b>로 만들어 레퍼런스 채널을 모으세요.
+          </p>
+        </section>
+      </Shell>
+    );
+  }
 
   return (
     <Shell>
-      <FolderTabs folders={folders} active={folder.id} />
-      <section className="rounded-b-2xl rounded-tr-2xl border border-line bg-card/60 p-4 md:p-5">
+      <SetSwitcher sets={sets} active={set.id} base="/dashboard" manage />
+      <FolderTabs folders={folders} active={folder.id} setId={set.id} color={set.color} />
+      <section className="rounded-b-2xl rounded-tr-2xl border border-line bg-card/60 p-4 md:p-5" style={{ borderTop: `3px solid ${color}` }}>
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line pb-3">
           <p className="text-[13px]">
-            <b>{folder.name}</b> <span className="text-faint">· 채널 {folder.n}개</span>
+            <b>{folder.name}</b> <span className="text-faint">· 채널 {folder.n}개 · {set.name}</span>
           </p>
           <div className="flex items-center gap-1.5 text-[12.5px]">
-            <Link href="/outliers" className="px-2 py-1.5 text-sub hover:text-ink">
+            <Link href={`/outliers?set=${set.id}`} className="px-2 py-1.5 text-sub hover:text-ink">
               아웃라이어 →
             </Link>
             <AddChannelButton folderId={folder.id} folderName={folder.name} />
-            <DeleteFolderButton folderId={folder.id} name={folder.name} />
+            <DeleteFolderButton folderId={folder.id} name={folder.name} setId={set.id} />
           </div>
         </div>
 

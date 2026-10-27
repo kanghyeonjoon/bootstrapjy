@@ -8,14 +8,18 @@ import { IconChevron, IconMore, IconSearch, IconSparkle, IconX } from "@/compone
 import { toast } from "@/components/Toast";
 import { compact } from "@/lib/format";
 import type { YtChannel } from "@/lib/youtube";
+import { setColor } from "@/lib/set-colors";
 import {
   addChannels,
   analyzePatterns,
   createFolder,
+  createSet,
   deleteFolder,
+  deleteSet,
   findChannels,
   removeChannels,
-  setMyChannel,
+  renameSet,
+  setSetChannel,
 } from "./actions";
 import type { DashParams, FolderChannel } from "./page";
 
@@ -37,25 +41,140 @@ function useParam() {
   };
 }
 
+// ── 세트 ──────────────────────────────────────────────────────
+// 세트 = 개인 채널 하나 + 그 채널의 레퍼런스 폴더들. 세트마다 색이 있어 칩·탭·카드 윗선에 같은 색이 깔린다.
+
+type SetChip = { id: number; name: string; color: number; myChannelTitle: string | null };
+
+/** 세트 전환 칩 줄. base 는 지금 보는 화면 (대시보드·내 채널·아웃라이어) — 같은 화면에서 세트만 바뀐다 */
+export function SetSwitcher({
+  sets,
+  active,
+  base,
+  manage,
+}: {
+  sets: SetChip[];
+  active: number;
+  base: "/dashboard" | "/my-channel" | "/outliers";
+  /** 대시보드에서만 활성 세트의 이름 변경·삭제를 보인다 */
+  manage?: boolean;
+}) {
+  const router = useRouter();
+  const [adding, setAdding] = useState(false);
+  const [, start] = useTransition();
+  const cur = sets.find((s) => s.id === active);
+
+  return (
+    <div className="mb-4 flex flex-wrap items-center gap-1.5">
+      {sets.map((s) => {
+        const on = s.id === active;
+        const c = setColor(s.color);
+        return (
+          <Link
+            key={s.id}
+            href={`${base}?set=${s.id}`}
+            title={s.myChannelTitle ? `개인 채널: ${s.myChannelTitle}` : "개인 채널 미지정"}
+            className={`flex items-center gap-2 rounded-full border px-3.5 py-1.5 text-[13px] ${
+              on ? "font-semibold" : "border-line text-sub hover:text-ink"
+            }`}
+            style={on ? { borderColor: c, background: `color-mix(in srgb, ${c} 14%, transparent)` } : undefined}
+          >
+            <span className="h-2.5 w-2.5 rounded-full" style={{ background: c }} />
+            {s.name}
+          </Link>
+        );
+      })}
+      <button onClick={() => setAdding(true)} className="rounded-full px-3 py-1.5 text-[13px] text-faint hover:text-ink">
+        + 새 세트
+      </button>
+      {manage && cur && (
+        <span className="ml-auto flex items-center gap-1 text-[12px] text-faint">
+          <button
+            onClick={() => {
+              const n = prompt("세트 이름", cur.name);
+              if (n !== null) start(async () => (await renameSet(cur.id, n), router.refresh()));
+            }}
+            className="px-1.5 py-1 hover:text-ink"
+          >
+            이름 변경
+          </button>
+          <button
+            onClick={() => {
+              if (!confirm(`'${cur.name}' 세트를 삭제할까요? 세트의 폴더와 아웃라이어 목록이 지워져요. 모아 둔 영상 DB 는 남습니다.`)) return;
+              start(async () => (await deleteSet(cur.id), router.push("/dashboard")));
+            }}
+            className="px-1.5 py-1 hover:text-red-600"
+          >
+            세트 삭제
+          </button>
+        </span>
+      )}
+      {adding && <NewSetModal onClose={() => setAdding(false)} />}
+    </div>
+  );
+}
+
+export function NewSetModal({ onClose }: { onClose: () => void }) {
+  const router = useRouter();
+  const [name, setName] = useState("");
+  const [channel, setChannel] = useState("");
+  const [busy, start] = useTransition();
+  const field = "w-full rounded-xl border border-line bg-card px-3 py-2.5 text-[14px] outline-none focus:border-ink";
+  return (
+    <Modal title="새 세트" onClose={onClose}>
+      <p className="text-[12.5px] leading-relaxed text-sub">
+        세트 = 내가 운영하는 채널 하나 + 그 채널이 참고할 레퍼런스 폴더예요. 분야가 다른 채널은 세트를 따로 만들면 아웃라이어도 서로 섞이지 않아요.
+      </p>
+      <p className="mt-4 text-[12.5px] font-medium text-sub">내 채널 (@핸들 또는 채널 주소)</p>
+      <input autoFocus value={channel} onChange={(e) => setChannel(e.target.value)} placeholder="@mychannel" className={`mt-1.5 ${field}`} />
+      <p className="mt-3 text-[12.5px] font-medium text-sub">세트 이름 (비우면 채널 이름)</p>
+      <input value={name} onChange={(e) => setName(e.target.value)} className={`mt-1.5 ${field}`} />
+      <div className="mt-5 flex justify-end">
+        <button
+          disabled={busy || (!name.trim() && !channel.trim())}
+          onClick={() =>
+            start(async () => {
+              const r = await createSet(name, channel);
+              if (!r) return toast("채널을 찾지 못했습니다");
+              onClose();
+              router.push(`/dashboard?folder=${r.folderId}`);
+            })
+          }
+          className="rounded-lg bg-ink px-4 py-2 text-[13px] font-semibold text-paper disabled:opacity-40"
+        >
+          {busy ? "만드는 중…" : "세트 만들기"}
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
 // ── 폴더 탭 ───────────────────────────────────────────────────
 
 export function FolderTabs({
   folders,
   active,
   mine,
+  setId,
+  color,
 }: {
   folders: Array<{ id: number; name: string; n: number }>;
   active: number;
   mine?: boolean;
+  setId: number;
+  color: number;
 }) {
   const router = useRouter();
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState("");
   const [, start] = useTransition();
+  const c = setColor(color);
+  // 활성 탭의 윗선을 세트 색으로 — 카드 윗선과 이어져 한 세트라는 게 보인다
+  const on = { boxShadow: `inset 0 3px 0 ${c}` };
 
   const submit = () =>
     start(async () => {
-      const id = await createFolder(name);
+      const id = await createFolder(setId, name);
       setAdding(false);
       setName("");
       router.push(`/dashboard?folder=${id}`);
@@ -64,7 +183,8 @@ export function FolderTabs({
   return (
     <div className="flex flex-wrap items-end gap-1">
       <Link
-        href="/my-channel"
+        href={`/my-channel?set=${setId}`}
+        style={mine ? on : undefined}
         className={`rounded-t-xl border border-b-0 px-3.5 py-2 text-[13px] ${
           mine ? "border-line bg-card/60 font-semibold" : "border-line bg-hover/5 text-sub hover:text-ink"
         }`}
@@ -75,6 +195,7 @@ export function FolderTabs({
         <Link
           key={f.id}
           href={`/dashboard?folder=${f.id}`}
+          style={f.id === active ? on : undefined}
           className={`rounded-t-xl border border-b-0 px-3.5 py-2 text-[13px] ${
             f.id === active ? "border-line bg-card/60 font-semibold" : "border-transparent text-sub hover:text-ink"
           }`}
@@ -106,33 +227,30 @@ export function FolderTabs({
   );
 }
 
-export function EmptyFolders() {
-  const router = useRouter();
-  const [, start] = useTransition();
+export function EmptySets() {
+  const [open, setOpen] = useState(false);
   return (
     <div className="rounded-2xl border border-line bg-card/60 px-6 py-16 text-center">
-      <p className="text-[15px] font-semibold">레퍼런스 폴더를 만들어 시작하세요</p>
+      <p className="text-[15px] font-semibold">세트를 만들어 시작하세요</p>
       <p className="mx-auto mt-1.5 max-w-sm text-[13px] text-sub">
-        참고하고 싶은 채널을 폴더에 넣으면, 채널 평균보다 잘 된 영상(아웃라이어)이 매일 모입니다.
+        내 채널 하나와 그 채널의 레퍼런스 폴더를 한 세트로 묶으면, 채널 평균보다 잘 된 영상(아웃라이어)이 세트별로 모입니다.
       </p>
-      <button
-        onClick={() => start(async () => router.push(`/dashboard?folder=${await createFolder("내 레퍼런스")}`))}
-        className="mt-5 rounded-xl bg-ink px-5 py-2.5 text-[13px] font-semibold text-paper"
-      >
-        + 첫 폴더 만들기
+      <button onClick={() => setOpen(true)} className="mt-5 rounded-xl bg-ink px-5 py-2.5 text-[13px] font-semibold text-paper">
+        + 첫 세트 만들기
       </button>
+      {open && <NewSetModal onClose={() => setOpen(false)} />}
     </div>
   );
 }
 
-export function DeleteFolderButton({ folderId, name }: { folderId: number; name: string }) {
+export function DeleteFolderButton({ folderId, name, setId }: { folderId: number; name: string; setId: number }) {
   const router = useRouter();
   const [, start] = useTransition();
   return (
     <button
       onClick={() => {
         if (!confirm(`'${name}' 폴더를 삭제할까요? 채널 등록만 풀리고 모아 둔 영상은 남습니다.`)) return;
-        start(async () => (await deleteFolder(folderId), router.push("/dashboard")));
+        start(async () => (await deleteFolder(folderId), router.push(`/dashboard?set=${setId}`)));
       }}
       className="px-2 py-1.5 text-faint hover:text-red-600"
     >
@@ -673,7 +791,7 @@ export function MyChannelBar({ format, sort, sp }: { format: string; sort: strin
   );
 }
 
-export function ChangeMyChannel() {
+export function ChangeMyChannel({ setId }: { setId: number }) {
   const [open, setOpen] = useState(false);
   const [val, setVal] = useState("");
   const [busy, start] = useTransition();
@@ -684,7 +802,7 @@ export function ChangeMyChannel() {
         변경
       </button>
       {open && (
-        <Modal title="내 채널 변경" onClose={() => setOpen(false)}>
+        <Modal title="이 세트의 내 채널 변경" onClose={() => setOpen(false)}>
           <input
             autoFocus
             value={val}
@@ -697,7 +815,7 @@ export function ChangeMyChannel() {
               disabled={busy || !val.trim()}
               onClick={() =>
                 start(async () => {
-                  if (await setMyChannel(val)) {
+                  if (await setSetChannel(setId, val)) {
                     setOpen(false);
                     router.refresh();
                   } else toast("채널을 찾지 못했습니다");

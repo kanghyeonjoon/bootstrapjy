@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
+import { migrateSets } from "./migrate-sets";
 import { SCHEMA_SQL } from "./schema";
 
 /**
@@ -35,7 +36,8 @@ async function open(): Promise<Driver> {
   } else {
     const { PGlite } = await import("@electric-sql/pglite");
     const { vector } = await import("@electric-sql/pglite-pgvector");
-    const dir = path.join(process.cwd(), "data", "pglite");
+    // PGLITE_DIR: 실제 데이터를 건드리지 않고 사본으로 시험할 때 쓴다
+    const dir = process.env.PGLITE_DIR || path.join(process.cwd(), "data", "pglite");
     fs.mkdirSync(dir, { recursive: true });
     const pg = new PGlite(dir, { extensions: { vector } });
     driver = { query: async (text, params) => (await pg.query<Row>(text, params)).rows };
@@ -62,6 +64,7 @@ async function open(): Promise<Driver> {
       [JSON.stringify(hash)],
     );
   }
+  await migrateSets((text, params) => driver.query(text, params));
   return driver;
 }
 

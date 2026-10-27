@@ -28,15 +28,19 @@ export type FindEvent =
 /** Vidoutliers 결과는 전부 2.0x 이상이었다 */
 const MIN_RATIO = 2;
 const CANDIDATES = 100;
+/** 결과가 이보다 적으면 가까운 순 후보로 채운다 */
+const MIN_RESULTS = 10;
+/** 조회수가 너무 적은 영상은 배수만 커 보인다 */
+const MIN_VIEWS = 3000;
 
 const PLAN = `너는 유튜브 레퍼런스 영상을 찾는 리서처다. 사용자는 영상을 기획 중이고, 하고 싶은 말(주장·메시지)을 대략 적는다.
 그 말과 "비슷한 이야기를 해서 이미 잘 된 영상"을 찾는 게 목적이다. 제목·썸네일 문구를 참고하려는 것이다.
 
 - intent: 사용자가 하려는 핵심 주장을 한 문장으로 (예: "불안은 마음보다 몸(자율신경)부터 진정시켜야 풀린다").
 - ko: 그런 주장을 담은 영상이 쓸 법한 한국어 유튜브 검색어 4개 (2~5단어, 서로 다른 각도).
-- en: 같은 이야기를 하는 영어권 영상을 찾을 영어 검색어 1개.
+- en: 같은 이야기를 하는 영어권 영상을 찾을 영어 검색어 3개 (서로 다른 각도, 영어권 유튜버가 실제로 쓸 법한 표현).
 
-출력은 JSON 하나만: {"intent":"...","ko":["..."],"en":"..."}`;
+출력은 JSON 하나만: {"intent":"...","ko":["..."],"en":["...","...","..."]}`;
 
 /** 고르는 기준: 같은 주제가 아니라 "같은 이야기를 하는가" */
 export const PICK = `너는 유튜브 레퍼런스 영상을 고르는 편집자다. 사용자는 영상을 기획 중이고, 자기가 하려는 말과 비슷한 이야기를 해서 잘 된 영상을 찾아 제목·썸네일 문구를 참고하려 한다.
@@ -45,7 +49,7 @@ export const PICK = `너는 유튜브 레퍼런스 영상을 고르는 편집자
 - 사용자의 핵심 주장과 같은 이야기(같은 메시지·같은 결론·같은 해법)를 하는 영상을 맨 앞에.
 - 그다음, 같은 시청자의 같은 고민을 다른 각도로 풀지만 메시지가 가까운 영상.
 - 주제 단어만 겹치고 하는 말이 다른 영상은 뺀다.
-- 10~15개를 목표로 한다. 맞는 게 정말 적을 때만 그보다 적게. 같은 채널은 3편까지만.
+- 최소 10개, 최대 15개를 고른다. 후보가 10개 이상이면 반드시 10개 이상을 채운다 — 앞쪽은 엄격하게, 뒤쪽은 같은 시청자에게 도움이 되는 비슷한 메시지로 넓혀 채운다. 후보 자체가 10개 미만일 때만 그보다 적게. 같은 채널은 3편까지만.
 
 출력은 JSON 하나만: {"ids":["영상ID", ...]}`;
 
@@ -82,11 +86,12 @@ export async function runFind(
   try {
     // 1. 요청 방향 파악 — 비슷한 영상 찾기는 기준 영상이 곧 방향이라 건너뛴다
     emit({ type: "step", step: 1, detail: hasLLM() ? undefined : "AI 키가 없어 단순 모드로 진행" });
-    let plan = { intent: prompt, ko: [prompt.slice(0, 60)], en: undefined as string | undefined };
+    let plan = { intent: prompt, ko: [prompt.slice(0, 60)], en: undefined as string[] | string | undefined };
     if (hasLLM()) {
       plan = await llmJson<typeof plan>(PLAN, prompt, { maxTokens: 600, lite: true, fast: true }).catch(() => plan);
     }
-    const queries = [...new Set([...(plan.ko ?? []).slice(0, 4), ...(plan.en ? [plan.en] : [])])];
+    const en = Array.isArray(plan.en) ? plan.en.slice(0, 3) : plan.en ? [plan.en] : [];
+    const queries = [...new Set([...(plan.ko ?? []).slice(0, 4), ...en])];
     await q("UPDATE finds SET intent = $2, queries = $3 WHERE id = $1", [findId, plan.intent, JSON.stringify(queries)]);
 
     // 2. 검색 준비 · 3. 영상 후보 찾기 — DB 에서 꺼내기만 한다 (뜻 검색 + 단어 검색)
@@ -99,7 +104,7 @@ export async function runFind(
       includeShorts: input.includeShorts,
       limit: CANDIDATES,
       // 결이 확실히 다른 채널(0점)은 뺀다. 아직 안 본 채널은 둔다
-      where: "COALESCE(c.fit, 1) > 0",
+      where: `COALESCE(c.fit, 1) > 0 AND v.view_count >= ${MIN_VIEWS}`,
       fast: true,
     });
     await q("UPDATE finds SET corpus_size = $2, candidates = $3 WHERE id = $1", [findId, total, cands.length]);
@@ -124,6 +129,32 @@ export async function runFind(
         });
         const known = new Set(pool.map((c) => c.video_id));
         ids = [...new Set(out.ids ?? [])].filter((id) => known.has(id)).slice(0, 15);
+        // AI 가 너무 깐깐하면 가까운 순 후보로 10개까지 채운다 (뒤쪽이라 순위는 밀린다)
+        if (ids.length < MIN_RESULTS) {
+          const strict = ids.length;
+          const have = new Set(ids);
+          for (const c of pool) {
+            if (ids.length >= MIN_RESULTS) break;
+            if (!have.has(c.video_id)) ids.push(c.video_id);
+          }
+          // 채워 넣은 영상만 한 번 더 걸러, 하려는 말과 무관하거나 시청자가 다른 영상을 뺀다
+          const filler = ids.slice(strict);
+          if (filler.length) {
+            try {
+              const byId = new Map(pool.map((c) => [c.video_id, c]));
+              const rows = filler.map((id) => `${id} | ${byId.get(id)?.channel_title} | ${byId.get(id)?.title_ko ?? byId.get(id)?.title}`).join("\n");
+              const chk = await llmJson<{ drop: string[] }>(
+                '너는 유튜브 레퍼런스 영상을 검수하는 편집자다. 사용자가 하려는 말과 무관하거나, 시청자가 다르거나(예: 사업가가 아닌 일반 시청자용 자기계발·경제 일반), 주제만 걸친 영상의 id를 골라낸다. JSON 하나만: {"drop":["영상ID", ...]}',
+                `하려는 말: ${prompt}\n핵심 주장: ${plan.intent}\n\n${rows}`,
+                { maxTokens: 400, lite: true, fast: true },
+              );
+              const drop = new Set(chk.drop ?? []);
+              ids = ids.filter((id) => !drop.has(id) || !filler.includes(id));
+            } catch {
+              // 검수가 실패하면 채운 그대로 낸다
+            }
+          }
+        }
       } catch {
         // 고르기가 실패해도 결과는 낸다 (뜻이 가까운 순)
       }

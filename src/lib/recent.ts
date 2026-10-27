@@ -84,7 +84,7 @@ export async function findRecent(findId: number): Promise<number> {
       texts: [f.prompt, f.intent ?? "", ...(f.queries ?? [])],
       minRatio: 0,
       limit: 60,
-      where: `v.published_at > now() - interval '${DAYS} days' AND (v.rising >= 2 OR v.ratio >= 2) AND COALESCE(c.fit, 1) > 0
+      where: `v.published_at > now() - interval '${DAYS} days' AND (v.rising >= 2 OR v.ratio >= 2) AND COALESCE(c.fit, 1) > 0 AND v.view_count >= 1000
               AND v.video_id NOT IN (SELECT video_id FROM find_hits WHERE find_id = ${Number(findId)} AND section = 'proven')`,
       fast: true,
     });

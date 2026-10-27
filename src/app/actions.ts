@@ -53,7 +53,11 @@ export async function addChannelToFolder(channelId: string, folderId: number): P
 }
 
 export async function listFolders(): Promise<Array<{ id: number; name: string }>> {
-  return q("SELECT id, name FROM folders ORDER BY position, id");
+  // 세트가 여럿이라 폴더 이름만으로는 어느 채널 것인지 모른다 — 세트 이름을 앞에 붙인다
+  return q(
+    `SELECT f.id, COALESCE(s.name || ' · ', '') || f.name AS name
+       FROM folders f LEFT JOIN sets s ON s.id = f.set_id ORDER BY s.position, s.id, f.position, f.id`,
+  );
 }
 
 // ── 대본 연결 ─────────────────────────────────────────────────

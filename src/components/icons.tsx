@@ -37,6 +37,11 @@ export const IconBookmark = ({ className, filled }: P & { filled?: boolean }) =>
     <path d="M6 3.5h12v17l-6-4-6 4z" />
   </svg>
 );
+export const IconComment = ({ className }: P) => (
+  <svg {...base(className)}>
+    <path d="M4 5.5A1.5 1.5 0 0 1 5.5 4h13A1.5 1.5 0 0 1 20 5.5v9a1.5 1.5 0 0 1-1.5 1.5H10l-4.5 4v-4h0A1.5 1.5 0 0 1 4 14.5z" />
+  </svg>
+);
 export const IconBulb = ({ className }: P) => (
   <svg {...base(className)}>
     <path d="M9 18h6M10 21h4" />
